@@ -6,6 +6,8 @@ import { MessagingInterface } from "@/components/MessagingInterface";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -16,15 +18,16 @@ import { useFavorites } from "@/hooks/useFavorites";
 import { useEcoImpact } from "@/hooks/useEcoImpact";
 import { useBadges } from "@/hooks/useBadges";
 import { supabase } from "@/lib/supabaseClient";
+import { toast } from "sonner";
 import { 
   Heart, MapPin, Calendar, Users, Leaf, Settings, Camera, 
   UserPlus, MessageSquare, Share2, TrendingUp, Award,
-  Send, Search, Plus, Map, Activity, CheckCircle2, Loader2
+  Send, Search, Plus, Map, Activity, CheckCircle2, Loader2, Edit2, Save, X
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const Profil = () => {
-  const { user } = useAuth();
+  const { user, profile, updateProfile } = useAuth();
   const { favorites } = useFavorites();
   const { stats } = useEcoImpact();
   const { badges } = useBadges();
@@ -38,6 +41,19 @@ const Profil = () => {
   const [groupsCount, setGroupsCount] = useState(0);
   const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  
+  // États pour la recherche d'amis
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+  
+  // États pour l'édition de profil
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formData, setFormData] = useState({
+    username: '',
+    full_name: '',
+    bio: '',
+  });
 
   const favoritesByType = {
     balade: favorites.filter(f => f.type === 'balade'),
@@ -62,6 +78,84 @@ const Profil = () => {
 
   const userLevel = Math.floor(stats.walksCompleted / 5) + 1;
   const nextLevelProgress = ((stats.walksCompleted % 5) / 5) * 100;
+
+  // Initialiser le formData avec le profil
+  useEffect(() => {
+    if (profile) {
+      setFormData({
+        username: profile.username || '',
+        full_name: profile.full_name || '',
+        bio: profile.bio || '',
+      });
+    }
+  }, [profile]);
+
+  // Fonction pour sauvegarder le profil
+  const handleSaveProfile = async () => {
+    setSaving(true);
+    try {
+      await updateProfile(formData);
+      setEditing(false);
+      toast.success("Profil mis à jour ! 🎉");
+    } catch (error: any) {
+      toast.error("Erreur: " + (error.message || "Impossible de mettre à jour"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Fonction pour rechercher des amis
+  const handleSearchFriends = async () => {
+    if (!searchFriend.trim()) {
+      toast.error('Veuillez entrer un nom d\'utilisateur');
+      return;
+    }
+
+    setSearching(true);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, username, full_name, avatar_url')
+        .ilike('username', `%${searchFriend}%`)
+        .neq('id', user?.id)
+        .limit(10);
+
+      if (error) throw error;
+      
+      setSearchResults(data || []);
+      
+      if (!data || data.length === 0) {
+        toast.info('Aucun utilisateur trouvé avec ce nom');
+      } else {
+        toast.success(`${data.length} utilisateur(s) trouvé(s)`);
+      }
+    } catch (error: any) {
+      console.error('Error searching users:', error);
+      toast.error('Erreur lors de la recherche: ' + (error.message || ''));
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  // Fonction pour envoyer une demande d'ami
+  const sendFriendRequest = async (friendId: string) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase.from('friendships').insert({
+        user_id: user.id,
+        friend_id: friendId,
+        status: 'pending',
+      });
+
+      if (error) throw error;
+      toast.success('Demande d\'ami envoyée !');
+      setSearchResults(searchResults.filter((u) => u.id !== friendId));
+    } catch (error) {
+      console.error('Error sending friend request:', error);
+      toast.error('Erreur lors de l\'envoi de la demande');
+    }
+  };
 
   // Récupérer les vraies données depuis Supabase
   useEffect(() => {
@@ -173,12 +267,10 @@ const Profil = () => {
                     </div>
                   </div>
 
-                  <Link to="/settings">
-                    <Button variant="outline">
-                      <Settings className="h-4 w-4 mr-2" />
-                      Paramètres
-                    </Button>
-                  </Link>
+                  <Button variant="outline" onClick={() => setActiveTab("settings")}>
+                    <Settings className="h-4 w-4 mr-2" />
+                    Paramètres
+                  </Button>
                 </div>
 
                 {/* Progression niveau */}
@@ -242,13 +334,14 @@ const Profil = () => {
       <section className="py-8">
         <div className="container mx-auto px-4">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="max-w-6xl mx-auto">
-            <TabsList className="grid w-full grid-cols-3 lg:grid-cols-6">
+            <TabsList className="grid w-full grid-cols-3 lg:grid-cols-7">
               <TabsTrigger value="overview">Aperçu</TabsTrigger>
               <TabsTrigger value="friends">Amis</TabsTrigger>
               <TabsTrigger value="groups">Groupes</TabsTrigger>
               <TabsTrigger value="messages">Messages</TabsTrigger>
               <TabsTrigger value="map">Carte</TabsTrigger>
               <TabsTrigger value="activity">Activité</TabsTrigger>
+              <TabsTrigger value="settings">Paramètres</TabsTrigger>
             </TabsList>
 
             {/* Onglet Aperçu */}
@@ -306,16 +399,50 @@ const Profil = () => {
                   <CardDescription>Recherchez et ajoutez des éco-citoyens</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 mb-4">
                     <Input 
                       placeholder="Rechercher par nom..." 
                       value={searchFriend}
                       onChange={(e) => setSearchFriend(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleSearchFriends()}
                     />
-                    <Button>
-                      <Search className="h-4 w-4" />
+                    <Button onClick={handleSearchFriends} disabled={searching}>
+                      {searching ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Search className="h-4 w-4" />
+                      )}
                     </Button>
                   </div>
+
+                  {/* Résultats de recherche */}
+                  {searchResults.length > 0 && (
+                    <div className="space-y-2 mb-4">
+                      <h4 className="font-semibold text-sm text-muted-foreground">Résultats :</h4>
+                      {searchResults.map((profile) => (
+                        <div key={profile.id} className="flex items-center justify-between p-3 border rounded-lg">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-10 w-10">
+                              <AvatarImage src={profile.avatar_url} />
+                              <AvatarFallback>
+                                {profile.username.slice(0, 2).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <p className="font-medium">{profile.username}</p>
+                              {profile.full_name && (
+                                <p className="text-sm text-muted-foreground">{profile.full_name}</p>
+                              )}
+                            </div>
+                          </div>
+                          <Button size="sm" onClick={() => sendFriendRequest(profile.id)}>
+                            <UserPlus className="h-4 w-4 mr-1" />
+                            Ajouter
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -478,6 +605,134 @@ const Profil = () => {
                     <p className="text-sm text-muted-foreground">
                       Retrouvez ici toutes vos actions sur la plateforme
                     </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Onglet Paramètres */}
+            <TabsContent value="settings" className="space-y-6 mt-6">
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle>Modifier mon profil</CardTitle>
+                      <CardDescription>
+                        Personnalisez vos informations publiques
+                      </CardDescription>
+                    </div>
+                    {!editing ? (
+                      <Button onClick={() => setEditing(true)}>
+                        <Edit2 className="h-4 w-4 mr-2" />
+                        Modifier
+                      </Button>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Button variant="outline" onClick={() => setEditing(false)}>
+                          <X className="h-4 w-4 mr-2" />
+                          Annuler
+                        </Button>
+                        <Button onClick={handleSaveProfile} disabled={saving}>
+                          {saving ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <Save className="h-4 w-4 mr-2" />
+                          )}
+                          Sauvegarder
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="flex items-center gap-6">
+                    <Avatar className="h-24 w-24">
+                      <AvatarImage src={profile?.avatar_url || ""} />
+                      <AvatarFallback className="text-2xl">
+                        {(formData.username || user?.email || "U")[0].toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="space-y-2">
+                      <h3 className="font-semibold">Photo de profil</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Membre actif
+                      </p>
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="username">Nom d'utilisateur</Label>
+                      <Input
+                        id="username"
+                        value={formData.username}
+                        onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                        disabled={!editing}
+                        placeholder="Votre pseudo"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="full_name">Nom complet</Label>
+                      <Input
+                        id="full_name"
+                        value={formData.full_name}
+                        onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                        disabled={!editing}
+                        placeholder="Votre nom complet"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Email</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={user?.email || ""}
+                        disabled
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        L'email ne peut pas être modifié
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="bio">Bio</Label>
+                      <Textarea
+                        id="bio"
+                        value={formData.bio}
+                        onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                        disabled={!editing}
+                        placeholder="Parlez-nous de vous..."
+                        rows={4}
+                      />
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-4">
+                    <h3 className="font-semibold">Statistiques</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="p-4 border rounded-lg">
+                        <p className="text-sm text-muted-foreground mb-1">Balades effectuées</p>
+                        <p className="text-2xl font-bold">{stats.walksCompleted}</p>
+                      </div>
+                      <div className="p-4 border rounded-lg">
+                        <p className="text-sm text-muted-foreground mb-1">CO₂ économisé</p>
+                        <p className="text-2xl font-bold">{stats.co2Saved.toFixed(1)} kg</p>
+                      </div>
+                      <div className="p-4 border rounded-lg">
+                        <p className="text-sm text-muted-foreground mb-1">Distance parcourue</p>
+                        <p className="text-2xl font-bold">{(stats.walksCompleted * 3.5).toFixed(1)} km</p>
+                      </div>
+                      <div className="p-4 border rounded-lg">
+                        <p className="text-sm text-muted-foreground mb-1">Niveau</p>
+                        <p className="text-2xl font-bold">{userLevel}</p>
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

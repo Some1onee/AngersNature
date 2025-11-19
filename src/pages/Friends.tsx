@@ -54,38 +54,79 @@ const Friends = () => {
     if (!user) return;
 
     try {
-      // Charger les amis acceptés
-      const { data: friendsData, error: friendsError } = await supabase
+      // Charger les amis acceptés où je suis user_id
+      const { data: sentFriendships, error: sentError } = await supabase
         .from('friendships')
-        .select(`
-          id,
-          status,
-          user_id,
-          friend_id,
-          profiles!friendships_friend_id_fkey (id, username, full_name, avatar_url)
-        `)
+        .select('*')
         .eq('user_id', user.id)
         .eq('status', 'accepted');
 
-      if (friendsError) throw friendsError;
+      if (sentError) throw sentError;
 
-      // Charger les demandes en attente reçues
+      // Charger les amis acceptés où je suis friend_id (ceux qui m'ont envoyé une demande que j'ai acceptée)
+      const { data: receivedFriendships, error: receivedError } = await supabase
+        .from('friendships')
+        .select('*')
+        .eq('friend_id', user.id)
+        .eq('status', 'accepted');
+
+      if (receivedError) throw receivedError;
+
+      // Combiner les deux listes
+      const allFriendships = [...(sentFriendships || []), ...(receivedFriendships || [])];
+
+      // Charger les profils des amis
+      if (allFriendships.length > 0) {
+        // Pour les friendships où je suis user_id, l'ami est friend_id
+        // Pour les friendships où je suis friend_id, l'ami est user_id
+        const friendIds = allFriendships.map(f => 
+          f.user_id === user.id ? f.friend_id : f.user_id
+        );
+        
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('id, username, full_name, avatar_url')
+          .in('id', friendIds);
+
+        const friendsWithProfiles = allFriendships.map(friendship => {
+          const friendId = friendship.user_id === user.id ? friendship.friend_id : friendship.user_id;
+          return {
+            ...friendship,
+            profiles: profilesData?.find(p => p.id === friendId),
+          };
+        });
+
+        setFriends(friendsWithProfiles as Friendship[]);
+      } else {
+        setFriends([]);
+      }
+
+      // Charger les demandes en attente reçues (sans jointure)
       const { data: requestsData, error: requestsError } = await supabase
         .from('friendships')
-        .select(`
-          id,
-          status,
-          user_id,
-          friend_id,
-          profiles!friendships_user_id_fkey (id, username, full_name, avatar_url)
-        `)
+        .select('*')
         .eq('friend_id', user.id)
         .eq('status', 'pending');
 
       if (requestsError) throw requestsError;
 
-      setFriends(friendsData || []);
-      setRequests(requestsData || []);
+      // Charger les profils des demandeurs
+      if (requestsData && requestsData.length > 0) {
+        const userIds = requestsData.map(r => r.user_id);
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('id, username, full_name, avatar_url')
+          .in('id', userIds);
+
+        const requestsWithProfiles = requestsData.map(request => ({
+          ...request,
+          profiles: profilesData?.find(p => p.id === request.user_id),
+        }));
+
+        setRequests(requestsWithProfiles as Friendship[]);
+      } else {
+        setRequests([]);
+      }
     } catch (error) {
       console.error('Error loading friendships:', error);
       toast.error('Erreur lors du chargement des amis');
@@ -95,10 +136,14 @@ const Friends = () => {
   };
 
   const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim()) {
+      toast.error('Veuillez entrer un nom d\'utilisateur');
+      return;
+    }
 
     setSearching(true);
     try {
+      console.log('Recherche de:', searchQuery);
       const { data, error } = await supabase
         .from('profiles')
         .select('id, username, full_name, avatar_url')
@@ -106,11 +151,22 @@ const Friends = () => {
         .neq('id', user?.id)
         .limit(10);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Erreur recherche:', error);
+        throw error;
+      }
+      
+      console.log('Résultats trouvés:', data);
       setSearchResults(data || []);
-    } catch (error) {
+      
+      if (!data || data.length === 0) {
+        toast.info('Aucun utilisateur trouvé avec ce nom');
+      } else {
+        toast.success(`${data.length} utilisateur(s) trouvé(s)`);
+      }
+    } catch (error: any) {
       console.error('Error searching users:', error);
-      toast.error('Erreur lors de la recherche');
+      toast.error('Erreur lors de la recherche: ' + (error.message || ''));
     } finally {
       setSearching(false);
     }

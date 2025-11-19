@@ -22,7 +22,6 @@ const Navigation = () => {
     { to: "/agenda", label: "Agenda" },
     { to: "/marches", label: "Marchés" },
     { to: "/quiz", label: "Quiz Nature" },
-    { to: "/profil", label: "Mon Profil" },
     { to: "/a-propos", label: "À propos" },
   ];
 
